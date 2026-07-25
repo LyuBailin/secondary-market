@@ -1,0 +1,21 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# 临时文件
+.tmp/
+*.tmp
+
+# 系统文件
+$RECYCLE.BIN/
+*.lnk
