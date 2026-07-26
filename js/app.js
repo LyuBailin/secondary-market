@@ -16,11 +16,10 @@
     green: '#6bcf7f',
     red: '#e74c3c',
     orange: '#f39c12',
-    purple: '#9b59b6',
     text: '#e8eaf0',
     subtext: '#9ba3b4',
     border: '#2a3245',
-    bg: '#1a2030'
+    bg: 'transparent'
   };
 
   const CATEGORY_COLORS = [
@@ -28,11 +27,25 @@
     '#f39c12', '#e74c3c'
   ];
 
-  // ECharts 通用配置
-  const baseChartOption = {
-    textStyle: { color: CHART_COLORS.text, fontFamily: 'inherit' },
-    backgroundColor: 'transparent'
-  };
+  // 检测亮色主题
+  const isLight = () => document.documentElement.getAttribute('data-theme') === 'light';
+
+  // ECharts 通用配置(根据主题调整)
+  const baseChartOption = () => ({
+    textStyle: { color: isLight() ? '#1a1f2e' : CHART_COLORS.text, fontFamily: 'inherit' },
+    backgroundColor: 'transparent',
+    animation: true,
+    animationDuration: 800,
+    animationEasing: 'cubicOut',
+    animationDelay: (idx) => idx * 80
+  });
+
+  // ========== 工具:图表加载完成后移除 skeleton ==========
+  function markChartLoaded(dom) {
+    if (dom && dom.parentElement) {
+      dom.parentElement.classList.add('loaded');
+    }
+  }
 
   // ========== 1. 渲染品类卡片 ==========
   function renderCategories() {
@@ -43,12 +56,16 @@
       const total = D.calcWeightedScore(cat.score);
       const budgetCls = cat.budgetFit === '高' ? 'budget-high' :
                         cat.budgetFit === '中' ? 'budget-mid' : 'budget-low';
+      const budgetIcon = cat.budgetFit === '高' ? '✓' :
+                         cat.budgetFit === '中' ? '⚠' : '✗';
+      const budgetText = cat.budgetFit === '高' ? '预算友好' :
+                         cat.budgetFit === '中' ? '部分超预算' : '谨慎投入';
 
       return `
         <div class="cat-card">
           <div class="cat-head">
             <div class="cat-emoji">${cat.emoji}</div>
-            <span class="cat-budget ${budgetCls}">${cat.budgetFit === '高' ? '✓ 预算友好' : cat.budgetFit === '中' ? '⚠ 部分超预算' : '✗ 谨慎投入'}</span>
+            <span class="cat-budget ${budgetCls}">${budgetIcon} ${budgetText}</span>
           </div>
           <h3 class="cat-title">${cat.name}</h3>
           <p class="cat-tagline">${cat.tagline}</p>
@@ -57,12 +74,14 @@
             <span class="cat-score-label">综合</span>
             <span class="cat-score-value">${total}</span>
             <div class="cat-score-bar">
-              <div class="cat-score-bar-fill" style="width:${(total / 5 * 100).toFixed(0)}%"></div>
+              <div class="cat-score-bar-fill" data-score="${(total / 5 * 100).toFixed(0)}"></div>
             </div>
             <span class="cat-score-label">/ 5.0</span>
           </div>
 
-          <div class="cat-radar" id="cat-radar-${cat.id}"></div>
+          <div class="cat-radar" id="cat-radar-${cat.id}">
+            <div class="skeleton skeleton-chart">加载中...</div>
+          </div>
 
           <div class="cat-info">
             <div class="cat-info-item">
@@ -77,15 +96,15 @@
             </div>
           </div>
 
-          <div class="cat-detail">
-            <h5>⚠️ 风险点</h5>
-            <ul class="cat-picks" style="font-size:12px;">
-              ${cat.risks.map(r => `<li style="color:var(--text-secondary);border-bottom:1px solid var(--border);"><span style="color:var(--accent-orange);">·</span>&nbsp;${r}</li>`).join('')}
+          <details class="cat-detail">
+            <summary class="cat-detail-summary">⚠️ 风险点 (${cat.risks.length})</summary>
+            <ul class="cat-picks risk">
+              ${cat.risks.map(r => `<li><span style="color:var(--accent-orange);">·</span>&nbsp;${r}</li>`).join('')}
             </ul>
-          </div>
+          </details>
 
           <div class="cat-detail">
-            <h5>💎 典型标的(5-6万预算)</h5>
+            <h5 class="cat-detail-summary" style="cursor:default;">💎 典型标的 (5-6万预算)</h5>
             <ul class="cat-picks">
               ${cat.picks.map(p => `
                 <li>
@@ -97,7 +116,7 @@
           </div>
 
           <div class="cat-insight">
-            <strong style="color:var(--accent-cyan);">洞察</strong> · ${cat.insight}
+            <strong>洞察</strong> · ${cat.insight}
           </div>
         </div>
       `;
@@ -109,12 +128,12 @@
       if (!dom) return;
       const chart = echarts.init(dom);
       chart.setOption({
-        ...baseChartOption,
+        ...baseChartOption(),
         tooltip: {
           trigger: 'item',
-          backgroundColor: 'rgba(20, 25, 37, 0.95)',
+          backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
           borderColor: CHART_COLORS.border,
-          textStyle: { color: CHART_COLORS.text }
+          textStyle: { color: isLight() ? '#1a1f2e' : CHART_COLORS.text }
         },
         radar: {
           indicator: [
@@ -126,7 +145,7 @@
           ],
           shape: 'polygon',
           splitNumber: 5,
-          axisName: { color: CHART_COLORS.subtext, fontSize: 11 },
+          axisName: { color: isLight() ? '#5a6373' : CHART_COLORS.subtext, fontSize: 11 },
           splitLine: { lineStyle: { color: CHART_COLORS.border } },
           splitArea: { areaStyle: { color: ['transparent'] } },
           axisLine: { lineStyle: { color: CHART_COLORS.border } }
@@ -144,7 +163,32 @@
           }]
         }]
       });
+      // 监听首次渲染完成
+      chart.on('finished', () => markChartLoaded(dom));
     });
+
+    // 触发进度条动画(用 IntersectionObserver 在可见时播放)
+    observeScoreBars();
+  }
+
+  // ========== 进度条入场动画 ==========
+  function observeScoreBars() {
+    const bars = document.querySelectorAll('.cat-score-bar-fill');
+    if (!('IntersectionObserver' in window)) {
+      // 降级:直接设置
+      bars.forEach(b => b.style.width = b.dataset.score + '%');
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const bar = entry.target;
+          bar.style.width = bar.dataset.score + '%';
+          observer.unobserve(bar);
+        }
+      });
+    }, { threshold: 0.3 });
+    bars.forEach(b => observer.observe(b));
   }
 
   // ========== 2. 综合雷达图 ==========
@@ -156,16 +200,16 @@
     const dimensions = ['日常使用', '装饰审美', '情感社交', '流通变现', '长期保值'];
 
     chart.setOption({
-      ...baseChartOption,
+      ...baseChartOption(),
       tooltip: {
         trigger: 'item',
-        backgroundColor: 'rgba(20, 25, 37, 0.95)',
+        backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
         borderColor: CHART_COLORS.border
       },
       legend: {
         data: D.CATEGORIES.map(c => c.name),
         bottom: 0,
-        textStyle: { color: CHART_COLORS.subtext, fontSize: 11 },
+        textStyle: { color: isLight() ? '#5a6373' : CHART_COLORS.subtext, fontSize: 11 },
         itemWidth: 14,
         itemHeight: 10
       },
@@ -173,7 +217,7 @@
         indicator: dimensions.map(d => ({ name: d, max: 5 })),
         shape: 'polygon',
         splitNumber: 5,
-        axisName: { color: CHART_COLORS.text, fontSize: 12 },
+        axisName: { color: isLight() ? '#1a1f2e' : CHART_COLORS.text, fontSize: 12 },
         splitLine: { lineStyle: { color: CHART_COLORS.border } },
         splitArea: { areaStyle: { color: ['rgba(255,255,255,0.02)', 'rgba(255,255,255,0.04)'] } },
         axisLine: { lineStyle: { color: CHART_COLORS.border } }
@@ -191,6 +235,7 @@
         }))
       }]
     });
+    chart.on('finished', () => markChartLoaded(dom));
   }
 
   // ========== 3. 加权得分排名 ==========
@@ -204,12 +249,16 @@
       value: parseFloat(D.calcWeightedScore(cat.score))
     })).sort((a, b) => b.value - a.value);
 
+    const textColor = isLight() ? '#1a1f2e' : CHART_COLORS.text;
+    const subColor = isLight() ? '#5a6373' : CHART_COLORS.subtext;
+
     chart.setOption({
-      ...baseChartOption,
+      ...baseChartOption(),
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(20, 25, 37, 0.95)',
+        backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
         borderColor: CHART_COLORS.border,
+        textStyle: { color: textColor },
         formatter: (params) => {
           const p = params[0];
           return `${p.name}<br/><strong style="color:${CHART_COLORS.gold};font-size:16px;">${p.value.toFixed(2)}</strong> / 5.00`;
@@ -220,14 +269,14 @@
         type: 'category',
         data: data.map(d => d.name),
         axisLine: { lineStyle: { color: CHART_COLORS.border } },
-        axisLabel: { color: CHART_COLORS.subtext, fontSize: 11, interval: 0, rotate: 20 }
+        axisLabel: { color: subColor, fontSize: 11, interval: 0, rotate: 20 }
       },
       yAxis: {
         type: 'value',
         max: 5,
         min: 0,
         axisLine: { show: false },
-        axisLabel: { color: CHART_COLORS.subtext, fontSize: 11 },
+        axisLabel: { color: subColor, fontSize: 11 },
         splitLine: { lineStyle: { color: CHART_COLORS.border, type: 'dashed' } }
       },
       series: [{
@@ -256,6 +305,7 @@
         barWidth: '50%'
       }]
     });
+    chart.on('finished', () => markChartLoaded(dom));
   }
 
   // ========== 4. 价格 vs 实用价值散点图 ==========
@@ -264,7 +314,9 @@
     if (!dom) return;
     const chart = echarts.init(dom);
 
-    // 用价格中位数作为 X 轴(单位:万)
+    const subColor = isLight() ? '#5a6373' : CHART_COLORS.subtext;
+    const textColor = isLight() ? '#1a1f2e' : CHART_COLORS.text;
+
     const data = D.CATEGORIES.map((cat, idx) => {
       const range = cat.priceRange.match(/[\d,]+/g);
       const min = parseFloat(range[0].replace(/,/g, '')) / 10000;
@@ -277,11 +329,12 @@
     });
 
     chart.setOption({
-      ...baseChartOption,
+      ...baseChartOption(),
       tooltip: {
         trigger: 'item',
-        backgroundColor: 'rgba(20, 25, 37, 0.95)',
+        backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
         borderColor: CHART_COLORS.border,
+        textStyle: { color: textColor },
         formatter: (params) => {
           const d = params.data;
           return `<strong>${d.name}</strong><br/>价格中位数: ¥${d.value[0]} 万<br/>综合得分: <span style="color:${CHART_COLORS.gold};">${d.value[1]}</span>`;
@@ -293,9 +346,9 @@
         name: '价格中位数(万元)',
         nameLocation: 'middle',
         nameGap: 30,
-        nameTextStyle: { color: CHART_COLORS.subtext, fontSize: 12 },
+        nameTextStyle: { color: subColor, fontSize: 12 },
         axisLine: { lineStyle: { color: CHART_COLORS.border } },
-        axisLabel: { color: CHART_COLORS.subtext, fontSize: 11 },
+        axisLabel: { color: subColor, fontSize: 11 },
         splitLine: { lineStyle: { color: CHART_COLORS.border, type: 'dashed' } }
       },
       yAxis: {
@@ -305,9 +358,9 @@
         min: 0,
         nameLocation: 'middle',
         nameGap: 40,
-        nameTextStyle: { color: CHART_COLORS.subtext, fontSize: 12 },
+        nameTextStyle: { color: subColor, fontSize: 12 },
         axisLine: { show: false },
-        axisLabel: { color: CHART_COLORS.subtext, fontSize: 11 },
+        axisLabel: { color: subColor, fontSize: 11 },
         splitLine: { lineStyle: { color: CHART_COLORS.border, type: 'dashed' } }
       },
       series: [{
@@ -317,13 +370,13 @@
         itemStyle: {
           color: (params) => CATEGORY_COLORS[params.data.value[2]],
           opacity: 0.7,
-          borderColor: '#fff',
+          borderColor: textColor,
           borderWidth: 1
         },
         label: {
           show: true,
           position: 'right',
-          color: CHART_COLORS.text,
+          color: textColor,
           fontSize: 11,
           formatter: (params) => params.data.name
         },
@@ -338,6 +391,7 @@
         }
       }]
     });
+    chart.on('finished', () => markChartLoaded(dom));
   }
 
   // ========== 5. 流动性柱状图 ==========
@@ -346,6 +400,9 @@
     if (!dom) return;
     const chart = echarts.init(dom);
 
+    const subColor = isLight() ? '#5a6373' : CHART_COLORS.subtext;
+    const textColor = isLight() ? '#1a1f2e' : CHART_COLORS.text;
+
     const data = D.CATEGORIES.map(cat => ({
       name: cat.name,
       liquidity: cat.score.liquidity,
@@ -353,29 +410,30 @@
     })).sort((a, b) => b.liquidity - a.liquidity);
 
     chart.setOption({
-      ...baseChartOption,
+      ...baseChartOption(),
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(20, 25, 37, 0.95)',
-        borderColor: CHART_COLORS.border
+        backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
+        borderColor: CHART_COLORS.border,
+        textStyle: { color: textColor }
       },
       legend: {
         data: ['流通变现能力', '长期保值潜力'],
         top: 0,
-        textStyle: { color: CHART_COLORS.subtext, fontSize: 11 }
+        textStyle: { color: subColor, fontSize: 11 }
       },
       grid: { top: 40, right: 20, bottom: 60, left: 50 },
       xAxis: {
         type: 'category',
         data: data.map(d => d.name),
         axisLine: { lineStyle: { color: CHART_COLORS.border } },
-        axisLabel: { color: CHART_COLORS.subtext, fontSize: 10, interval: 0, rotate: 18 }
+        axisLabel: { color: subColor, fontSize: 10, interval: 0, rotate: 18 }
       },
       yAxis: {
         type: 'value',
         max: 5,
         axisLine: { show: false },
-        axisLabel: { color: CHART_COLORS.subtext, fontSize: 11 },
+        axisLabel: { color: subColor, fontSize: 11 },
         splitLine: { lineStyle: { color: CHART_COLORS.border, type: 'dashed' } }
       },
       series: [
@@ -395,6 +453,7 @@
         }
       ]
     });
+    chart.on('finished', () => markChartLoaded(dom));
   }
 
   // ========== 6. 价格区间横向条形图 ==========
@@ -403,23 +462,25 @@
     if (!dom) return;
     const chart = echarts.init(dom);
 
-    // 解析价格区间
+    const subColor = isLight() ? '#5a6373' : CHART_COLORS.subtext;
+    const textColor = isLight() ? '#1a1f2e' : CHART_COLORS.text;
+
     const data = D.CATEGORIES.map(cat => {
       const range = cat.priceRange.match(/[\d,]+/g);
-      const min = parseFloat(range[0].replace(/,/g, '')) / 10000; // 转万
+      const min = parseFloat(range[0].replace(/,/g, '')) / 10000;
       const max = parseFloat(range[1].replace(/,/g, '')) / 10000;
       return { name: cat.name, min, max, emoji: cat.emoji };
     });
 
-    // 预算上限 5.6 万
     const BUDGET = 5.6;
 
     chart.setOption({
-      ...baseChartOption,
+      ...baseChartOption(),
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(20, 25, 37, 0.95)',
+        backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
         borderColor: CHART_COLORS.border,
+        textStyle: { color: textColor },
         formatter: (params) => {
           const d = params[0];
           const min = d.value;
@@ -431,9 +492,9 @@
       xAxis: {
         type: 'value',
         name: '价格(万元)',
-        nameTextStyle: { color: CHART_COLORS.subtext },
+        nameTextStyle: { color: subColor },
         axisLine: { lineStyle: { color: CHART_COLORS.border } },
-        axisLabel: { color: CHART_COLORS.subtext },
+        axisLabel: { color: subColor },
         splitLine: { lineStyle: { color: CHART_COLORS.border, type: 'dashed' } }
       },
       yAxis: {
@@ -441,10 +502,9 @@
         data: data.map(d => d.name).reverse(),
         axisLine: { show: false },
         axisTick: { show: false },
-        axisLabel: { color: CHART_COLORS.text, fontSize: 12 }
+        axisLabel: { color: textColor, fontSize: 12 }
       },
       series: [
-        // 区间条
         {
           type: 'bar',
           stack: 'range',
@@ -466,7 +526,7 @@
           label: {
             show: true,
             position: 'right',
-            color: CHART_COLORS.text,
+            color: textColor,
             fontSize: 11,
             formatter: (params) => {
               const d = data[data.length - 1 - params.dataIndex];
@@ -477,6 +537,7 @@
         }
       ]
     });
+    chart.on('finished', () => markChartLoaded(dom));
   }
 
   // ========== 7. 渲染推荐方案 ==========
@@ -519,12 +580,12 @@
     `).join('');
   }
 
-  // ========== 9. 滚动锚点高亮 ==========
+  // ========== 9. 滚动锚点高亮(底部金线) ==========
   function initNavHighlight() {
     const sections = document.querySelectorAll('section[id], header[id]');
-    const navLinks = document.querySelectorAll('.nav-menu a');
+    const navLinks = document.querySelectorAll('.nav-menu a[data-nav], .nav-drawer a[data-nav]');
 
-    window.addEventListener('scroll', () => {
+    const updateActive = () => {
       let current = '';
       sections.forEach(section => {
         const top = section.offsetTop;
@@ -533,27 +594,163 @@
         }
       });
       navLinks.forEach(link => {
-        link.style.color = '';
-        link.style.background = '';
-        if (link.getAttribute('href') === '#' + current) {
-          link.style.color = 'var(--accent-gold)';
-          link.style.background = 'var(--bg-card)';
-        }
+        const isActive = link.getAttribute('href') === '#' + current;
+        link.classList.toggle('active', isActive);
       });
+    };
+
+    window.addEventListener('scroll', updateActive, { passive: true });
+    updateActive();
+  }
+
+  // ========== 10. 移动端汉堡菜单 ==========
+  function initMobileMenu() {
+    const burger = document.getElementById('navBurger');
+    const drawer = document.getElementById('navDrawer');
+    const backdrop = document.getElementById('navBackdrop');
+    if (!burger || !drawer) return;
+
+    const close = () => {
+      burger.classList.remove('open');
+      drawer.classList.remove('open');
+      backdrop.classList.remove('show');
+      document.body.style.overflow = '';
+    };
+
+    const toggle = () => {
+      const isOpen = drawer.classList.contains('open');
+      if (isOpen) close(); else {
+        burger.classList.add('open');
+        drawer.classList.add('open');
+        backdrop.classList.add('show');
+        document.body.style.overflow = 'hidden';
+      }
+    };
+
+    burger.addEventListener('click', toggle);
+    backdrop.addEventListener('click', close);
+
+    // 抽屉菜单点击后关闭
+    drawer.querySelectorAll('a').forEach(a => {
+      a.addEventListener('click', () => setTimeout(close, 100));
+    });
+
+    // ESC 关闭
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && drawer.classList.contains('open')) close();
     });
   }
 
-  // ========== 10. 响应式 resize ==========
+  // ========== 11. 主题切换 ==========
+  const THEME_KEY = 'secondary-market-theme';
+  function initThemeToggle() {
+    const btn = document.getElementById('themeToggle');
+    if (!btn) return;
+
+    // 读取保存的主题
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+      btn.textContent = '☀️';
+    }
+
+    btn.addEventListener('click', () => {
+      const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+      const next = isLight ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', next);
+      btn.textContent = next === 'light' ? '☀️' : '🌙';
+      localStorage.setItem(THEME_KEY, next);
+      // 重新渲染图表(颜色变了)
+      rerenderAllCharts();
+    });
+  }
+
+  function rerenderAllCharts() {
+    // 销毁并重建所有图表
+    [
+      'chart-radar', 'chart-score', 'chart-scatter', 'chart-liquidity', 'chart-range'
+    ].forEach(id => {
+      const dom = document.getElementById(id);
+      if (dom) echarts.dispose(dom);
+    });
+    D.CATEGORIES.forEach(cat => {
+      const dom = document.getElementById(`cat-radar-${cat.id}`);
+      if (dom) echarts.dispose(dom);
+    });
+    // 重建(先重置 skeleton)
+    document.querySelectorAll('.chart-canvas').forEach(c => c.classList.remove('loaded'));
+    initRadarChart();
+    initScoreChart();
+    initScatterChart();
+    initLiquidityChart();
+    initRangeChart();
+    // 重新渲染卡片雷达(独立)
+    D.CATEGORIES.forEach((cat, idx) => {
+      const dom = document.getElementById(`cat-radar-${cat.id}`);
+      if (!dom) return;
+      const chart = echarts.init(dom);
+      chart.setOption({
+        ...baseChartOption(),
+        tooltip: {
+          trigger: 'item',
+          backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
+          borderColor: CHART_COLORS.border
+        },
+        radar: {
+          indicator: [
+            { name: '日常', max: 5 },
+            { name: '装饰', max: 5 },
+            { name: '社交', max: 5 },
+            { name: '流通', max: 5 },
+            { name: '保值', max: 5 }
+          ],
+          shape: 'polygon',
+          splitNumber: 5,
+          axisName: { color: isLight() ? '#5a6373' : CHART_COLORS.subtext, fontSize: 11 },
+          splitLine: { lineStyle: { color: CHART_COLORS.border } },
+          splitArea: { areaStyle: { color: ['transparent'] } },
+          axisLine: { lineStyle: { color: CHART_COLORS.border } }
+        },
+        series: [{
+          type: 'radar',
+          data: [{
+            value: [cat.score.daily, cat.score.decor, cat.score.social, cat.score.liquidity, cat.score.preserve],
+            name: cat.name,
+            symbol: 'circle',
+            symbolSize: 4,
+            lineStyle: { color: CATEGORY_COLORS[idx], width: 2 },
+            areaStyle: { color: CATEGORY_COLORS[idx], opacity: 0.25 },
+            itemStyle: { color: CATEGORY_COLORS[idx] }
+          }]
+        }]
+      });
+      chart.on('finished', () => markChartLoaded(dom));
+    });
+  }
+
+  // ========== 12. 返回顶部按钮 ==========
+  function initBackToTop() {
+    const btn = document.getElementById('backToTop');
+    if (!btn) return;
+
+    const onScroll = () => {
+      btn.classList.toggle('visible', window.scrollY > 600);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+
+    btn.addEventListener('click', () => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  // ========== 13. 响应式 resize ==========
   function initResizeHandler() {
     let timer = null;
     window.addEventListener('resize', () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
-        echarts.getInstanceByDom(document.getElementById('chart-radar'))?.resize();
-        echarts.getInstanceByDom(document.getElementById('chart-score'))?.resize();
-        echarts.getInstanceByDom(document.getElementById('chart-scatter'))?.resize();
-        echarts.getInstanceByDom(document.getElementById('chart-liquidity'))?.resize();
-        echarts.getInstanceByDom(document.getElementById('chart-range'))?.resize();
+        ['chart-radar', 'chart-score', 'chart-scatter', 'chart-liquidity', 'chart-range']
+          .forEach(id => echarts.getInstanceByDom(document.getElementById(id))?.resize());
         D.CATEGORIES.forEach(cat => {
           echarts.getInstanceByDom(document.getElementById(`cat-radar-${cat.id}`))?.resize();
         });
@@ -572,8 +769,11 @@
     initLiquidityChart();
     initRangeChart();
     initNavHighlight();
+    initMobileMenu();
+    initThemeToggle();
+    initBackToTop();
     initResizeHandler();
-    console.log('[倒爷市场] 调研网站已加载 · 6 品类 · 5 维评估');
+    console.log('[倒爷市场] v2.0 · 14 项 UI 优化已完成');
   }
 
   if (document.readyState === 'loading') {
