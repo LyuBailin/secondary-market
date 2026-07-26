@@ -1,784 +1,659 @@
 /**
- * 二级市场调研 - 应用主逻辑
- * 渲染内容 · 初始化图表 · 交互
+ * 倒爷市场 · v3.0
+ * 分页路由 + 动态渲染 + 图表重置
+ * 数据更新:2026-07-15
  */
 
 (function () {
   'use strict';
 
-  const D = window.MARKET_DATA;
+  const M = window.MARKET_DATA;
+  if (!M) { console.error('MARKET_DATA 未加载'); return; }
 
-  // ========== ECharts 主题 ==========
-  const CHART_COLORS = {
-    gold: '#d4af37',
-    cyan: '#4ecdc4',
-    blue: '#5b8def',
-    green: '#6bcf7f',
-    red: '#e74c3c',
-    orange: '#f39c12',
-    text: '#e8eaf0',
-    subtext: '#9ba3b4',
-    border: '#2a3245',
-    bg: 'transparent'
+  // ========== 路由 ==========
+  const ROUTES = {
+    '#/overview':          { page: 'overview',          title: '概览' },
+    '#/evaluate':          { page: 'evaluate',          title: '评估体系' },
+    '#/dashboard':         { page: 'dashboard',         title: '交易仪表盘' },
+    '#/category/watch':    { page: 'category-watch',    title: '中端腕表' },
+    '#/category/whisky':   { page: 'category-whisky',   title: '收藏级威士忌' },
+    '#/category/art':      { page: 'category-art',      title: '当代艺术' },
+    '#/category/furniture':{ page: 'category-furniture',title: '设计师家具' },
+    '#/category/sneaker':  { page: 'category-sneaker',  title: '限量球鞋' },
+    '#/category/figure':   { page: 'category-figure',   title: '潮玩盲盒' },
+    '#/recommend':         { page: 'recommend',         title: '投资建议' },
+    '#/risks':             { page: 'risks',             title: '风险避坑' }
   };
 
-  const CATEGORY_COLORS = [
-    '#d4af37', '#4ecdc4', '#5b8def', '#9b59b6',
-    '#f39c12', '#e74c3c'
-  ];
+  let currentRoute = '#/overview';
+  let activeEvalDim = 'spread';
 
-  // 检测亮色主题
-  const isLight = () => document.documentElement.getAttribute('data-theme') === 'light';
+  // ========== 工具:从字符串价区间提取均值(用于仪表盘数字) ==========
+  function parseRangeMean(rangeStr) {
+    // 例: "4.8-5.2 万" -> 50000; "1,400-1,800" -> 1600; "100-200" -> 150
+    const clean = rangeStr.replace(/[,\s]/g, '');
+    const m = clean.match(/([\d.]+)\s*[-~到]\s*([\d.]+)\s*(万)?/);
+    if (!m) return null;
+    const a = parseFloat(m[1]);
+    const b = parseFloat(m[2]);
+    const isWan = !!m[3];
+    const mean = (a + b) / 2;
+    return isWan ? mean * 10000 : mean;
+  }
 
-  // ECharts 通用配置(根据主题调整)
-  const baseChartOption = () => ({
-    textStyle: { color: isLight() ? '#1a1f2e' : CHART_COLORS.text, fontFamily: 'inherit' },
-    backgroundColor: 'transparent',
-    animation: true,
-    animationDuration: 800,
-    animationEasing: 'cubicOut',
-    animationDelay: (idx) => idx * 80
-  });
+  // ========== 路由:解析 hash ==========
+  function parseRoute() {
+    const h = location.hash || '#/overview';
+    return ROUTES[h] ? h : '#/overview';
+  }
 
-  // ========== 工具:图表加载完成后移除 skeleton ==========
-  function markChartLoaded(dom) {
-    if (dom && dom.parentElement) {
-      dom.parentElement.classList.add('loaded');
+  // ========== 路由:切换页面 ==========
+  function navigate(route, pushState = true) {
+    const target = ROUTES[route] ? route : '#/overview';
+    if (pushState && location.hash !== target) {
+      location.hash = target;
+      return; // hashchange 会再次触发
+    }
+    currentRoute = target;
+
+    // 隐藏所有 page,激活目标
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    const targetPage = `data-page="${ROUTES[target].page}"`;
+    const pageEl = document.querySelector(`.page[${targetPage}]`);
+    if (pageEl) pageEl.classList.add('active');
+
+    // 更新 nav 高亮
+    document.querySelectorAll('.nav-menu .nav-link').forEach(a => {
+      a.classList.toggle('active', a.getAttribute('data-route') === target);
+    });
+
+    // 更新标题
+    document.title = `${ROUTES[target].title} · 倒爷市场`;
+
+    // 关闭移动端 drawer
+    closeDrawer();
+
+    // 关闭 dropdown
+    document.getElementById('navDropdown')?.classList.remove('open');
+
+    // 触发页面渲染
+    onPageShow(ROUTES[target].page);
+
+    // 滚动到顶
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  // ========== 页面进入时渲染 ==========
+  function onPageShow(page) {
+    // 先 dispose 所有图表
+    disposeAllCharts();
+
+    if (page === 'overview') {
+      renderCatOverview();
+    } else if (page === 'evaluate') {
+      renderEvalWeights();
+      renderEvalRadar();
+      renderEvalDimTabs();
+      renderEvalDimChart();
+    } else if (page === 'dashboard') {
+      renderDashSummary();
+      renderDashTable();
+    } else if (page === 'recommend') {
+      renderRecSingle();
+      renderRecPortfolio();
+    } else if (page === 'risks') {
+      renderRisk();
+    } else if (page.startsWith('category-')) {
+      const id = page.replace('category-', '');
+      renderCatDetail(id);
     }
   }
 
-  // ========== 1. 渲染品类卡片 ==========
-  function renderCategories() {
-    const grid = document.getElementById('cat-grid');
+  // ========== 图表管理 ==========
+  const _chartRegistry = {};
+  function getChart(id) { return _chartRegistry[id] || null; }
+  function setChart(id, inst) {
+    if (_chartRegistry[id]) {
+      try { _chartRegistry[id].dispose(); } catch (e) {}
+    }
+    _chartRegistry[id] = inst;
+  }
+  function disposeAllCharts() {
+    Object.keys(_chartRegistry).forEach(k => {
+      try { _chartRegistry[k].dispose(); } catch (e) {}
+      delete _chartRegistry[k];
+    });
+  }
+
+  // ========== 通用:获取主题色 ==========
+  function getThemeColors() {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    return {
+      text: dark ? '#e8eaf0' : '#1a1f2e',
+      textSub: dark ? '#9ba3b4' : '#5a6373',
+      border: dark ? '#2a3245' : '#e1e4e8',
+      bg: dark ? '#141925' : '#ffffff',
+      gold: '#d4af37',
+      cyan: '#4ecdc4',
+      blue: '#5b8def',
+      green: '#6bcf7f',
+      red: '#e74c3c',
+      orange: '#f39c12',
+      isDark: dark
+    };
+  }
+
+  // ========== 1. 概览:6 品类卡片 ==========
+  function renderCatOverview() {
+    const grid = document.getElementById('catOverviewGrid');
     if (!grid) return;
-
-    grid.innerHTML = D.CATEGORIES.map((cat, idx) => {
-      const total = D.calcWeightedScore(cat.score);
-      const budgetCls = cat.budgetFit === '高' ? 'budget-high' :
-                        cat.budgetFit === '中' ? 'budget-mid' : 'budget-low';
-      const budgetIcon = cat.budgetFit === '高' ? '✓' :
-                         cat.budgetFit === '中' ? '⚠' : '✗';
-      const budgetText = cat.budgetFit === '高' ? '预算友好' :
-                         cat.budgetFit === '中' ? '部分超预算' : '谨慎投入';
-
+    grid.innerHTML = M.CATEGORIES.map(c => {
+      const score = M.calcWeightedScore(c.score);
+      const firstBuy = c.tradeGuide.buyZone[0];
       return `
-        <div class="cat-card">
-          <div class="cat-head">
-            <div class="cat-emoji">${cat.emoji}</div>
-            <span class="cat-budget ${budgetCls}">${budgetIcon} ${budgetText}</span>
-          </div>
-          <h3 class="cat-title">${cat.name}</h3>
-          <p class="cat-tagline">${cat.tagline}</p>
-
-          <div class="cat-score-row">
-            <span class="cat-score-label">综合</span>
-            <span class="cat-score-value">${total}</span>
-            <div class="cat-score-bar">
-              <div class="cat-score-bar-fill" data-score="${(total / 5 * 100).toFixed(0)}"></div>
+        <a class="cat-overview-card" data-route="#/category/${c.id}" href="#/category/${c.id}">
+          <div class="cat-overview-head">
+            <span class="cat-overview-emoji">${c.emoji}</span>
+            <div>
+              <h3 class="cat-overview-title">${c.name}</h3>
+              <p class="cat-overview-tagline">${c.tagline}</p>
             </div>
-            <span class="cat-score-label">/ 5.0</span>
           </div>
-
-          <div class="cat-radar" id="cat-radar-${cat.id}">
-            <div class="skeleton skeleton-chart">加载中...</div>
-          </div>
-
-          <div class="cat-info">
-            <div class="cat-info-item">
-              <div class="cat-info-item-label">价格区间</div>
-              <div class="cat-info-item-value">¥${cat.priceRange}</div>
+          <div class="cat-overview-stats">
+            <div class="cat-overview-stat">
+              <div class="cat-overview-stat-value">${score}</div>
+              <div class="cat-overview-stat-label">赚钱评分</div>
             </div>
-            <div class="cat-info-item">
-              <div class="cat-info-item-label">主要平台</div>
-              <div class="platform-list">
-                ${cat.platforms.map(p => `<span class="platform-tag">${p}</span>`).join('')}
+            <div class="cat-overview-stat">
+              <div class="cat-overview-stat-value">${c.budgetFit}</div>
+              <div class="cat-overview-stat-label">预算匹配</div>
+            </div>
+            <div class="cat-overview-stat">
+              <div class="cat-overview-stat-value" style="color:var(--accent-green)">${firstBuy.range}</div>
+              <div class="cat-overview-stat-label">入手价</div>
+            </div>
+          </div>
+          <div class="cat-overview-cta">查看交易仪表盘 →</div>
+        </a>
+      `;
+    }).join('');
+  }
+
+  // ========== 2. 评估:6 维权重说明 ==========
+  function renderEvalWeights() {
+    const wrap = document.getElementById('evalWeights');
+    if (!wrap) return;
+    wrap.innerHTML = Object.entries(M.EVAL_WEIGHTS).map(([key, v]) => `
+      <div class="eval-weight-item">
+        <div class="eval-weight-pct">${(v.weight * 100).toFixed(0)}%</div>
+        <div class="eval-weight-info">
+          <h4>${v.name}</h4>
+          <p>${v.desc}</p>
+        </div>
+        <div class="eval-weight-bar" style="flex:0 0 120px">
+          <div class="eval-weight-bar-fill" style="width:${v.weight * 100}%"></div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ========== 2. 评估:雷达图 ==========
+  function renderEvalRadar() {
+    const dom = document.getElementById('evalRadarChart');
+    if (!dom || !window.echarts) return;
+    const c = getThemeColors();
+    const cats = M.CATEGORIES;
+    const dimKeys = Object.keys(M.EVAL_WEIGHTS);
+    const dimNames = dimKeys.map(k => M.EVAL_WEIGHTS[k].name);
+
+    const palette = [c.gold, c.cyan, c.blue, c.green, c.orange, c.red];
+    const series = cats.map((cat, i) => ({
+      name: cat.shortName,
+      value: dimKeys.map(k => cat.score[k]),
+      itemStyle: { color: palette[i % palette.length] },
+      lineStyle: { color: palette[i % palette.length], width: 2 },
+      areaStyle: { color: palette[i % palette.length], opacity: 0.08 }
+    }));
+
+    const inst = window.echarts.init(dom);
+    inst.setOption({
+      tooltip: { trigger: 'item' },
+      legend: { bottom: 0, textStyle: { color: c.textSub } },
+      radar: {
+        indicator: dimNames.map(n => ({ name: n, max: 5 })),
+        splitNumber: 5,
+        axisName: { color: c.text, fontSize: 12 },
+        splitLine: { lineStyle: { color: c.border } },
+        splitArea: { areaStyle: { color: ['transparent'] } },
+        axisLine: { lineStyle: { color: c.border } }
+      },
+      series: [{ type: 'radar', data: series, symbol: 'circle', symbolSize: 4 }]
+    });
+    setChart('evalRadar', inst);
+  }
+
+  // ========== 2. 评估:维度 tab + 条形图 ==========
+  function renderEvalDimTabs() {
+    const wrap = document.getElementById('evalDimTabs');
+    if (!wrap) return;
+    wrap.innerHTML = Object.entries(M.EVAL_WEIGHTS).map(([k, v]) => `
+      <button class="eval-dim-tab ${k === activeEvalDim ? 'active' : ''}" data-dim="${k}">
+        ${v.name} <span class="eval-dim-percent">${(v.weight * 100).toFixed(0)}%</span>
+      </button>
+    `).join('');
+    wrap.querySelectorAll('.eval-dim-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeEvalDim = btn.getAttribute('data-dim');
+        renderEvalDimTabs();
+        renderEvalDimChart();
+      });
+    });
+  }
+
+  function renderEvalDimChart() {
+    const dom = document.getElementById('evalDimChart');
+    if (!dom || !window.echarts) return;
+    const c = getThemeColors();
+    const w = M.EVAL_WEIGHTS[activeEvalDim];
+    const sorted = [...M.CATEGORIES].sort((a, b) => b.score[activeEvalDim] - a.score[activeEvalDim]);
+
+    const inst = window.echarts.init(dom);
+    inst.setOption({
+      title: {
+        text: `${w.name}得分(权重 ${(w.weight * 100).toFixed(0)}%)`,
+        subtext: w.desc,
+        left: 'left',
+        textStyle: { color: c.text, fontSize: 15 },
+        subtextStyle: { color: c.textSub, fontSize: 12 }
+      },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      grid: { left: 90, right: 30, top: 60, bottom: 30 },
+      xAxis: {
+        type: 'value',
+        max: 5,
+        axisLine: { lineStyle: { color: c.border } },
+        axisLabel: { color: c.textSub },
+        splitLine: { lineStyle: { color: c.border, type: 'dashed' } }
+      },
+      yAxis: {
+        type: 'category',
+        data: sorted.map(x => `${x.emoji} ${x.shortName}`),
+        axisLine: { lineStyle: { color: c.border } },
+        axisLabel: { color: c.text }
+      },
+      series: [{
+        type: 'bar',
+        data: sorted.map((x, i) => ({
+          value: x.score[activeEvalDim],
+          itemStyle: { color: i === 0 ? c.gold : (i < 3 ? c.cyan : c.blue) }
+        })),
+        label: { show: true, position: 'right', color: c.text },
+        barWidth: '60%'
+      }]
+    });
+    setChart('evalDim', inst);
+  }
+
+  // ========== 3. 仪表盘:摘要卡 ==========
+  function renderDashSummary() {
+    const wrap = document.getElementById('dashSummary');
+    if (!wrap) return;
+    // 找出综合得分最高、流动性最好、价差最大、持有成本最低的
+    const ranked = M.CATEGORIES.map(c => ({
+      cat: c,
+      score: parseFloat(M.calcWeightedScore(c.score))
+    })).sort((a, b) => b.score - a.score);
+    const topScore = ranked[0];
+    const bestLiq = [...M.CATEGORIES].sort((a, b) => b.score.liquidity - a.score.liquidity)[0];
+    const bestSpread = [...M.CATEGORIES].sort((a, b) => b.score.spread - a.score.spread)[0];
+    const lowCost = [...M.CATEGORIES].sort((a, b) => b.score.cost - a.score.cost)[0];
+
+    wrap.innerHTML = `
+      <div class="dash-card">
+        <div class="dash-card-label">🏆 综合最优</div>
+        <div class="dash-card-value">${topScore.cat.shortName}</div>
+        <div class="dash-card-sub">加权得分 ${topScore.score} · ${topScore.cat.emoji} ${topScore.cat.name}</div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-label">⚡ 变现最快</div>
+        <div class="dash-card-value">${bestLiq.shortName}</div>
+        <div class="dash-card-sub">流动性 ${bestLiq.score.liquidity}/5 · ${bestLiq.tradeGuide.platforms.sell[0]}</div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-label">💰 价差最大</div>
+        <div class="dash-card-value">${bestSpread.shortName}</div>
+        <div class="dash-card-sub">价差 ${bestSpread.score.spread}/5 · ${bestSpread.tradeGuide.buyZone[0].range} → ${bestSpread.tradeGuide.sellZone[0]?.range || '长持'}</div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-label">💸 成本最低</div>
+        <div class="dash-card-value">${lowCost.shortName}</div>
+        <div class="dash-card-sub">持有成本 ${lowCost.score.cost}/5 · ${lowCost.tradeGuide.feeNote}</div>
+      </div>
+    `;
+  }
+
+  // ========== 3. 仪表盘:价格表 ==========
+  function renderDashTable() {
+    const wrap = document.getElementById('dashTable');
+    if (!wrap) return;
+    wrap.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>品类</th>
+            <th>入手价</th>
+            <th>出手价</th>
+            <th>持有期</th>
+            <th>预期年化</th>
+            <th>综合分</th>
+            <th>趋势</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${M.CATEGORIES.map(c => {
+            const score = M.calcWeightedScore(c.score);
+            const buy = c.tradeGuide.buyZone[0].range;
+            const sell = c.tradeGuide.sellZone[0]?.range || '长持';
+            const signalCls = c.score.preserve >= 4 ? 'signal-up' : (c.score.preserve <= 2 ? 'signal-down' : 'signal-flat');
+            const signalText = c.score.preserve >= 4 ? '↑ 稳/涨' : (c.score.preserve <= 2 ? '↓ 弱' : '→ 震荡');
+            return `
+              <tr>
+                <td><a class="cat-cell" data-route="#/category/${c.id}" href="#/category/${c.id}"><span class="emoji">${c.emoji}</span>${c.shortName}</a></td>
+                <td class="price-buy">${buy}</td>
+                <td class="price-sell">${sell}</td>
+                <td>${c.tradeGuide.holdPeriod}</td>
+                <td>${c.tradeGuide.expectedReturn}</td>
+                <td><strong>${score}</strong> / 5</td>
+                <td class="${signalCls}">${signalText}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  // ========== 4-9. 品类详情页 ==========
+  function renderCatDetail(catId) {
+    const c = M.CATEGORIES.find(x => x.id === catId);
+    if (!c) return;
+    const targetId = `catDetail${catId.charAt(0).toUpperCase() + catId.slice(1)}`;
+    const wrap = document.getElementById(targetId);
+    if (!wrap) return;
+
+    const score = M.calcWeightedScore(c.score);
+    const dimBars = Object.entries(M.EVAL_WEIGHTS).map(([k, v]) => `
+      <div class="cat-dim-row">
+        <div class="cat-dim-label">${v.name}</div>
+        <div class="cat-dim-bar">
+          <div class="cat-dim-bar-fill" style="width:${(c.score[k] / 5) * 100}%;background:${c.score[k] >= 4 ? 'var(--accent-green)' : (c.score[k] >= 3 ? 'var(--accent-gold)' : 'var(--accent-red)')}"></div>
+        </div>
+        <div class="cat-dim-value">${c.score[k]}/5</div>
+      </div>
+    `).join('');
+
+    const insightHtml = c.insight.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+    wrap.innerHTML = `
+      <a class="cat-back-btn" data-route="#/dashboard" href="#/dashboard">← 返回仪表盘</a>
+
+      <header class="cat-detail-header">
+        <div class="cat-detail-header-inner">
+          <span class="cat-detail-emoji">${c.emoji}</span>
+          <div class="cat-detail-header-text">
+            <h1 class="cat-detail-title">${c.name}</h1>
+            <p class="cat-detail-tagline">${c.tagline}</p>
+            <div class="cat-detail-meta">
+              <span>💰 ${c.priceRange}</span>
+              <span>🎯 预算匹配:${c.budgetFit}</span>
+              <span>⭐ 综合得分:${score} / 5</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="cat-detail-body">
+        <main class="cat-detail-main">
+          <!-- 交易仪表盘:入手 -->
+          <div class="trade-block">
+            <div class="trade-block-label"><span class="icon">🟢</span> 入手价区间(该买什么价)</div>
+            <div class="trade-list">
+              ${c.tradeGuide.buyZone.map(b => `
+                <div class="trade-item">
+                  <div class="trade-item-range">${b.range}</div>
+                  <div class="trade-item-name">${b.item}</div>
+                  <div class="trade-item-note">${b.note}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- 交易仪表盘:出手 -->
+          <div class="trade-block sell">
+            <div class="trade-block-label"><span class="icon">🔴</span> 出手价区间(该卖什么价)</div>
+            ${c.tradeGuide.sellZone.length > 0
+              ? `<div class="trade-list">${c.tradeGuide.sellZone.map(s => `
+                <div class="trade-item">
+                  <div class="trade-item-range">${s.range}</div>
+                  <div class="trade-item-name">${s.item}</div>
+                  <div class="trade-item-note">${s.note}</div>
+                </div>
+              `).join('')}</div>`
+              : '<div class="trade-item-note" style="color:var(--text-muted);padding:12px 14px;background:var(--bg-secondary);border-radius:6px">本品类以长期持有为主,无短线出手价</div>'
+            }
+          </div>
+
+          <!-- 交易仪表盘:信号 -->
+          <div class="trade-block signals">
+            <div class="trade-block-label"><span class="icon">🚦</span> 交易信号(什么时候买/卖)</div>
+            <div class="trade-summary">
+              <div class="trade-signal">
+                <h4>✅ 买入信号(出现任一即可入场)</h4>
+                <ul class="trade-signal-list">${c.tradeGuide.buySignals.map(s => `<li>${s}</li>`).join('')}</ul>
+              </div>
+              <div class="trade-signal">
+                <h4>💰 卖出信号(出现任一即可出手)</h4>
+                <ul class="trade-signal-list">${c.tradeGuide.sellSignals.map(s => `<li>${s}</li>`).join('')}</ul>
               </div>
             </div>
           </div>
 
-          <details class="cat-detail">
-            <summary class="cat-detail-summary">⚠️ 风险点 (${cat.risks.length})</summary>
-            <ul class="cat-picks risk">
-              ${cat.risks.map(r => `<li><span style="color:var(--accent-orange);">·</span>&nbsp;${r}</li>`).join('')}
-            </ul>
-          </details>
+          <!-- 交易仪表盘:避坑 -->
+          <div class="trade-block avoid">
+            <div class="trade-block-label"><span class="icon">⛔</span> 避坑清单(千万别碰)</div>
+            <ul class="avoid-list">${c.tradeGuide.avoidZones.map(a => `<li>${a}</li>`).join('')}</ul>
+          </div>
 
-          <div class="cat-detail">
-            <h5 class="cat-detail-summary" style="cursor:default;">💎 典型标的 (5-6万预算)</h5>
+          <!-- 交易仪表盘:平台与费用(横向大块) -->
+          <div class="trade-block trade-block-wide">
+            <div class="trade-block-label"><span class="icon">🏪</span> 平台/费用</div>
+            <div class="platform-grid">
+              <div>
+                <h4>📥 买入渠道</h4>
+                <ul>${c.tradeGuide.platforms.buy.map(p => `<li>${p}</li>`).join('')}</ul>
+              </div>
+              <div>
+                <h4>📤 卖出渠道</h4>
+                <ul>${c.tradeGuide.platforms.sell.map(p => `<li>${p}</li>`).join('')}</ul>
+              </div>
+              <div>
+                <h4>💸 费用说明</h4>
+                <div class="fee-note">${c.tradeGuide.feeNote}</div>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <aside class="cat-detail-aside">
+          <section class="cat-info-card">
+            <h3>📊 6 维评分</h3>
+            <div class="cat-dim-bars">${dimBars}</div>
+          </section>
+
+          <section class="cat-info-card">
+            <h3>💎 主推单品</h3>
             <ul class="cat-picks">
-              ${cat.picks.map(p => `
+              ${c.picks.map(p => `
                 <li>
                   <span class="cat-pick-name">${p.name}</span>
                   <span class="cat-pick-price">${p.price}</span>
                 </li>
               `).join('')}
             </ul>
-          </div>
+          </section>
 
-          <div class="cat-insight">
-            <strong>洞察</strong> · ${cat.insight}
-          </div>
-        </div>
-      `;
-    }).join('');
+          <section class="cat-info-card">
+            <h3>⚠️ 风险提示</h3>
+            <ul class="cat-risk-list">${c.risks.map(r => `<li>${r}</li>`).join('')}</ul>
+          </section>
 
-    // 每个卡片渲染小型雷达图
-    D.CATEGORIES.forEach((cat, idx) => {
-      const dom = document.getElementById(`cat-radar-${cat.id}`);
-      if (!dom) return;
-      const chart = echarts.init(dom);
-      chart.setOption({
-        ...baseChartOption(),
-        tooltip: {
-          trigger: 'item',
-          backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
-          borderColor: CHART_COLORS.border,
-          textStyle: { color: isLight() ? '#1a1f2e' : CHART_COLORS.text }
-        },
-        radar: {
-          indicator: [
-            { name: '日常', max: 5 },
-            { name: '装饰', max: 5 },
-            { name: '社交', max: 5 },
-            { name: '流通', max: 5 },
-            { name: '保值', max: 5 }
-          ],
-          shape: 'polygon',
-          splitNumber: 5,
-          axisName: { color: isLight() ? '#5a6373' : CHART_COLORS.subtext, fontSize: 11 },
-          splitLine: { lineStyle: { color: CHART_COLORS.border } },
-          splitArea: { areaStyle: { color: ['transparent'] } },
-          axisLine: { lineStyle: { color: CHART_COLORS.border } }
-        },
-        series: [{
-          type: 'radar',
-          data: [{
-            value: [cat.score.daily, cat.score.decor, cat.score.social, cat.score.liquidity, cat.score.preserve],
-            name: cat.name,
-            symbol: 'circle',
-            symbolSize: 4,
-            lineStyle: { color: CATEGORY_COLORS[idx], width: 2 },
-            areaStyle: { color: CATEGORY_COLORS[idx], opacity: 0.25 },
-            itemStyle: { color: CATEGORY_COLORS[idx] }
-          }]
-        }]
-      });
-      // 监听首次渲染完成
-      chart.on('finished', () => markChartLoaded(dom));
-    });
-
-    // 触发进度条动画(用 IntersectionObserver 在可见时播放)
-    observeScoreBars();
+          <section class="cat-info-card">
+            <h3>📌 2026-07 行情总结</h3>
+            <div class="cat-insight-box">${insightHtml}</div>
+          </section>
+        </aside>
+      </div>
+    `;
   }
 
-  // ========== 进度条入场动画 ==========
-  function observeScoreBars() {
-    const bars = document.querySelectorAll('.cat-score-bar-fill');
-    if (!('IntersectionObserver' in window)) {
-      // 降级:直接设置
-      bars.forEach(b => b.style.width = b.dataset.score + '%');
-      return;
-    }
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          const bar = entry.target;
-          bar.style.width = bar.dataset.score + '%';
-          observer.unobserve(bar);
-        }
-      });
-    }, { threshold: 0.3 });
-    bars.forEach(b => observer.observe(b));
-  }
-
-  // ========== 2. 综合雷达图 ==========
-  function initRadarChart() {
-    const dom = document.getElementById('chart-radar');
-    if (!dom) return;
-    const chart = echarts.init(dom);
-
-    const dimensions = ['日常使用', '装饰审美', '情感社交', '流通变现', '长期保值'];
-
-    chart.setOption({
-      ...baseChartOption(),
-      tooltip: {
-        trigger: 'item',
-        backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
-        borderColor: CHART_COLORS.border
-      },
-      legend: {
-        data: D.CATEGORIES.map(c => c.name),
-        bottom: 0,
-        textStyle: { color: isLight() ? '#5a6373' : CHART_COLORS.subtext, fontSize: 11 },
-        itemWidth: 14,
-        itemHeight: 10
-      },
-      radar: {
-        indicator: dimensions.map(d => ({ name: d, max: 5 })),
-        shape: 'polygon',
-        splitNumber: 5,
-        axisName: { color: isLight() ? '#1a1f2e' : CHART_COLORS.text, fontSize: 12 },
-        splitLine: { lineStyle: { color: CHART_COLORS.border } },
-        splitArea: { areaStyle: { color: ['rgba(255,255,255,0.02)', 'rgba(255,255,255,0.04)'] } },
-        axisLine: { lineStyle: { color: CHART_COLORS.border } }
-      },
-      series: [{
-        type: 'radar',
-        symbol: 'circle',
-        symbolSize: 4,
-        data: D.CATEGORIES.map((cat, idx) => ({
-          value: [cat.score.daily, cat.score.decor, cat.score.social, cat.score.liquidity, cat.score.preserve],
-          name: cat.name,
-          lineStyle: { color: CATEGORY_COLORS[idx], width: 2 },
-          areaStyle: { color: CATEGORY_COLORS[idx], opacity: 0.12 },
-          itemStyle: { color: CATEGORY_COLORS[idx] }
-        }))
-      }]
-    });
-    chart.on('finished', () => markChartLoaded(dom));
-  }
-
-  // ========== 3. 加权得分排名 ==========
-  function initScoreChart() {
-    const dom = document.getElementById('chart-score');
-    if (!dom) return;
-    const chart = echarts.init(dom);
-
-    const data = D.CATEGORIES.map(cat => ({
-      name: cat.name.replace('(劳力士/帝舵/欧米茄)', '中端腕表').replace('(山崎/麦卡伦)', '收藏威士忌'),
-      value: parseFloat(D.calcWeightedScore(cat.score))
-    })).sort((a, b) => b.value - a.value);
-
-    const textColor = isLight() ? '#1a1f2e' : CHART_COLORS.text;
-    const subColor = isLight() ? '#5a6373' : CHART_COLORS.subtext;
-
-    chart.setOption({
-      ...baseChartOption(),
-      tooltip: {
-        trigger: 'axis',
-        backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
-        borderColor: CHART_COLORS.border,
-        textStyle: { color: textColor },
-        formatter: (params) => {
-          const p = params[0];
-          return `${p.name}<br/><strong style="color:${CHART_COLORS.gold};font-size:16px;">${p.value.toFixed(2)}</strong> / 5.00`;
-        }
-      },
-      grid: { top: 20, right: 30, bottom: 60, left: 50 },
-      xAxis: {
-        type: 'category',
-        data: data.map(d => d.name),
-        axisLine: { lineStyle: { color: CHART_COLORS.border } },
-        axisLabel: { color: subColor, fontSize: 11, interval: 0, rotate: 20 }
-      },
-      yAxis: {
-        type: 'value',
-        max: 5,
-        min: 0,
-        axisLine: { show: false },
-        axisLabel: { color: subColor, fontSize: 11 },
-        splitLine: { lineStyle: { color: CHART_COLORS.border, type: 'dashed' } }
-      },
-      series: [{
-        type: 'bar',
-        data: data.map((d, i) => ({
-          value: d.value,
-          itemStyle: {
-            color: {
-              type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-              colorStops: [
-                { offset: 0, color: CATEGORY_COLORS[i] },
-                { offset: 1, color: CATEGORY_COLORS[i] + '66' }
-              ]
-            },
-            borderRadius: [6, 6, 0, 0]
-          }
-        })),
-        label: {
-          show: true,
-          position: 'top',
-          color: CHART_COLORS.gold,
-          fontWeight: 700,
-          fontSize: 13,
-          formatter: '{c}'
-        },
-        barWidth: '50%'
-      }]
-    });
-    chart.on('finished', () => markChartLoaded(dom));
-  }
-
-  // ========== 4. 价格 vs 实用价值散点图 ==========
-  function initScatterChart() {
-    const dom = document.getElementById('chart-scatter');
-    if (!dom) return;
-    const chart = echarts.init(dom);
-
-    const subColor = isLight() ? '#5a6373' : CHART_COLORS.subtext;
-    const textColor = isLight() ? '#1a1f2e' : CHART_COLORS.text;
-
-    const data = D.CATEGORIES.map((cat, idx) => {
-      const range = cat.priceRange.match(/[\d,]+/g);
-      const min = parseFloat(range[0].replace(/,/g, '')) / 10000;
-      const max = parseFloat(range[1].replace(/,/g, '')) / 10000;
-      const mid = ((min + max) / 2).toFixed(1);
-      return {
-        name: cat.name,
-        value: [parseFloat(mid), parseFloat(D.calcWeightedScore(cat.score)), idx]
-      };
-    });
-
-    chart.setOption({
-      ...baseChartOption(),
-      tooltip: {
-        trigger: 'item',
-        backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
-        borderColor: CHART_COLORS.border,
-        textStyle: { color: textColor },
-        formatter: (params) => {
-          const d = params.data;
-          return `<strong>${d.name}</strong><br/>价格中位数: ¥${d.value[0]} 万<br/>综合得分: <span style="color:${CHART_COLORS.gold};">${d.value[1]}</span>`;
-        }
-      },
-      grid: { top: 30, right: 30, bottom: 50, left: 60 },
-      xAxis: {
-        type: 'value',
-        name: '价格中位数(万元)',
-        nameLocation: 'middle',
-        nameGap: 30,
-        nameTextStyle: { color: subColor, fontSize: 12 },
-        axisLine: { lineStyle: { color: CHART_COLORS.border } },
-        axisLabel: { color: subColor, fontSize: 11 },
-        splitLine: { lineStyle: { color: CHART_COLORS.border, type: 'dashed' } }
-      },
-      yAxis: {
-        type: 'value',
-        name: '综合得分',
-        max: 5,
-        min: 0,
-        nameLocation: 'middle',
-        nameGap: 40,
-        nameTextStyle: { color: subColor, fontSize: 12 },
-        axisLine: { show: false },
-        axisLabel: { color: subColor, fontSize: 11 },
-        splitLine: { lineStyle: { color: CHART_COLORS.border, type: 'dashed' } }
-      },
-      series: [{
-        type: 'scatter',
-        symbolSize: (val) => 30 + val[1] * 8,
-        data: data,
-        itemStyle: {
-          color: (params) => CATEGORY_COLORS[params.data.value[2]],
-          opacity: 0.7,
-          borderColor: textColor,
-          borderWidth: 1
-        },
-        label: {
-          show: true,
-          position: 'right',
-          color: textColor,
-          fontSize: 11,
-          formatter: (params) => params.data.name
-        },
-        markLine: {
-          silent: true,
-          symbol: 'none',
-          lineStyle: { color: CHART_COLORS.gold, type: 'dashed', width: 1 },
-          data: [
-            { xAxis: 5, label: { formatter: '预算上限 ¥5.6万', color: CHART_COLORS.gold, position: 'end' } },
-            { yAxis: 3, label: { formatter: '及格线 3.0', color: CHART_COLORS.gold, position: 'end' } }
-          ]
-        }
-      }]
-    });
-    chart.on('finished', () => markChartLoaded(dom));
-  }
-
-  // ========== 5. 流动性柱状图 ==========
-  function initLiquidityChart() {
-    const dom = document.getElementById('chart-liquidity');
-    if (!dom) return;
-    const chart = echarts.init(dom);
-
-    const subColor = isLight() ? '#5a6373' : CHART_COLORS.subtext;
-    const textColor = isLight() ? '#1a1f2e' : CHART_COLORS.text;
-
-    const data = D.CATEGORIES.map(cat => ({
-      name: cat.name,
-      liquidity: cat.score.liquidity,
-      preserve: cat.score.preserve
-    })).sort((a, b) => b.liquidity - a.liquidity);
-
-    chart.setOption({
-      ...baseChartOption(),
-      tooltip: {
-        trigger: 'axis',
-        backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
-        borderColor: CHART_COLORS.border,
-        textStyle: { color: textColor }
-      },
-      legend: {
-        data: ['流通变现能力', '长期保值潜力'],
-        top: 0,
-        textStyle: { color: subColor, fontSize: 11 }
-      },
-      grid: { top: 40, right: 20, bottom: 60, left: 50 },
-      xAxis: {
-        type: 'category',
-        data: data.map(d => d.name),
-        axisLine: { lineStyle: { color: CHART_COLORS.border } },
-        axisLabel: { color: subColor, fontSize: 10, interval: 0, rotate: 18 }
-      },
-      yAxis: {
-        type: 'value',
-        max: 5,
-        axisLine: { show: false },
-        axisLabel: { color: subColor, fontSize: 11 },
-        splitLine: { lineStyle: { color: CHART_COLORS.border, type: 'dashed' } }
-      },
-      series: [
-        {
-          name: '流通变现能力',
-          type: 'bar',
-          data: data.map(d => d.liquidity),
-          itemStyle: { color: CHART_COLORS.cyan, borderRadius: [4, 4, 0, 0] },
-          barWidth: '35%'
-        },
-        {
-          name: '长期保值潜力',
-          type: 'bar',
-          data: data.map(d => d.preserve),
-          itemStyle: { color: CHART_COLORS.gold, borderRadius: [4, 4, 0, 0] },
-          barWidth: '35%'
-        }
-      ]
-    });
-    chart.on('finished', () => markChartLoaded(dom));
-  }
-
-  // ========== 6. 价格区间横向条形图 ==========
-  function initRangeChart() {
-    const dom = document.getElementById('chart-range');
-    if (!dom) return;
-    const chart = echarts.init(dom);
-
-    const subColor = isLight() ? '#5a6373' : CHART_COLORS.subtext;
-    const textColor = isLight() ? '#1a1f2e' : CHART_COLORS.text;
-
-    const data = D.CATEGORIES.map(cat => {
-      const range = cat.priceRange.match(/[\d,]+/g);
-      const min = parseFloat(range[0].replace(/,/g, '')) / 10000;
-      const max = parseFloat(range[1].replace(/,/g, '')) / 10000;
-      return { name: cat.name, min, max, emoji: cat.emoji };
-    });
-
-    const BUDGET = 5.6;
-
-    chart.setOption({
-      ...baseChartOption(),
-      tooltip: {
-        trigger: 'axis',
-        backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
-        borderColor: CHART_COLORS.border,
-        textStyle: { color: textColor },
-        formatter: (params) => {
-          const d = params[0];
-          const min = d.value;
-          const max = d.value + d.data.range;
-          return `<strong>${d.name}</strong><br/>价格区间: ¥${min.toFixed(1)} 万 ~ ¥${max.toFixed(1)} 万<br/>预算覆盖: ${min <= BUDGET ? '✅ 可触达' : '⚠️ 部分超预算'}`;
-        }
-      },
-      grid: { top: 30, right: 80, bottom: 30, left: 180 },
-      xAxis: {
-        type: 'value',
-        name: '价格(万元)',
-        nameTextStyle: { color: subColor },
-        axisLine: { lineStyle: { color: CHART_COLORS.border } },
-        axisLabel: { color: subColor },
-        splitLine: { lineStyle: { color: CHART_COLORS.border, type: 'dashed' } }
-      },
-      yAxis: {
-        type: 'category',
-        data: data.map(d => d.name).reverse(),
-        axisLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: { color: textColor, fontSize: 12 }
-      },
-      series: [
-        {
-          type: 'bar',
-          stack: 'range',
-          data: data.map(d => d.min).reverse(),
-          itemStyle: { color: 'transparent' },
-          barWidth: 24
-        },
-        {
-          type: 'bar',
-          stack: 'range',
-          data: data.map(d => d.max - d.min).reverse(),
-          itemStyle: {
-            color: (params) => {
-              const d = data[data.length - 1 - params.dataIndex];
-              return d.min <= BUDGET ? CHART_COLORS.cyan : CHART_COLORS.gold;
-            },
-            borderRadius: [0, 6, 6, 0]
-          },
-          label: {
-            show: true,
-            position: 'right',
-            color: textColor,
-            fontSize: 11,
-            formatter: (params) => {
-              const d = data[data.length - 1 - params.dataIndex];
-              return `¥${d.min.toFixed(1)} - ${d.max.toFixed(1)}万`;
-            }
-          },
-          barWidth: 24
-        }
-      ]
-    });
-    chart.on('finished', () => markChartLoaded(dom));
-  }
-
-  // ========== 7. 渲染推荐方案 ==========
-  function renderRecommendations() {
-    const grid = document.getElementById('rec-grid');
-    if (!grid) return;
-    grid.innerHTML = D.RECOMMENDATIONS.single.map(rec => `
-      <div class="rec-card ${rec.rank === 1 ? 'featured' : ''}">
-        <div class="rec-rank">${rec.rank}</div>
-        <span class="rec-tag">${rec.tag}</span>
-        <h3 class="rec-name">${rec.name}</h3>
-        <div class="rec-price">${rec.price}</div>
-        <p class="rec-reason"><strong style="color:var(--accent-cyan);">推荐理由</strong><br/>${rec.reason}</p>
-        <div class="rec-risk">⚠️ ${rec.risk}</div>
+  // ========== 10. 投资建议:单品 TOP 3 ==========
+  function renderRecSingle() {
+    const wrap = document.getElementById('recSingleGrid');
+    if (!wrap) return;
+    wrap.innerHTML = M.RECOMMENDATIONS.single.map(r => `
+      <div class="rec-card ${r.rank === 1 ? 'featured' : ''}">
+        <div class="rec-rank">#${r.rank}</div>
+        <span class="rec-tag">${r.tag}</span>
+        <h3 class="rec-name">${r.name}</h3>
+        <div class="rec-price">${r.price}</div>
+        <p class="rec-reason">${r.reason}</p>
+        <div class="rec-zone">📍 入手/出手:${r.buyZone}</div>
+        <div class="rec-risk">⚠️ 风险:${r.risk}</div>
       </div>
     `).join('');
+  }
 
-    const portfolioGrid = document.getElementById('portfolio-grid');
-    if (!portfolioGrid) return;
-    portfolioGrid.innerHTML = D.RECOMMENDATIONS.portfolio.map(p => `
+  // ========== 10. 投资建议:组合方案 ==========
+  function renderRecPortfolio() {
+    const wrap = document.getElementById('recPortfolioGrid');
+    if (!wrap) return;
+    wrap.innerHTML = M.RECOMMENDATIONS.portfolio.map(p => `
       <div class="portfolio-card">
         <h3 class="portfolio-name">${p.name}</h3>
-        <span class="portfolio-alloc">${p.allocation}</span>
+        <div class="portfolio-alloc">${p.allocation}</div>
         <p class="portfolio-desc">${p.desc}</p>
+        <div class="portfolio-return">📈 预期收益:${p.expectedReturn}</div>
         <div class="portfolio-suitable">👤 适合:${p.suitable}</div>
       </div>
     `).join('');
   }
 
-  // ========== 8. 渲染风险提示 ==========
-  function renderRisks() {
-    const grid = document.getElementById('risk-grid');
-    if (!grid) return;
-    grid.innerHTML = D.RISKS.map(risk => `
+  // ========== 11. 风险 ==========
+  function renderRisk() {
+    const wrap = document.getElementById('riskGrid');
+    if (!wrap) return;
+    wrap.innerHTML = M.RISKS.map((r, i) => `
       <div class="risk-card">
-        <h4 class="risk-title">⚠️ ${risk.title}</h4>
-        <p class="risk-detail">${risk.detail}</p>
-        <div class="risk-advice">💡 ${risk.advice}</div>
+        <div class="risk-num">${i + 1}</div>
+        <h3 class="risk-title">${r.title}</h3>
+        <p class="risk-detail">${r.detail}</p>
+        <div class="risk-advice">✅ 应对:${r.advice}</div>
       </div>
     `).join('');
   }
 
-  // ========== 9. 滚动锚点高亮(底部金线) ==========
-  function initNavHighlight() {
-    const sections = document.querySelectorAll('section[id], header[id]');
-    const navLinks = document.querySelectorAll('.nav-menu a[data-nav], .nav-drawer a[data-nav]');
-
-    const updateActive = () => {
-      let current = '';
-      sections.forEach(section => {
-        const top = section.offsetTop;
-        if (window.scrollY >= top - 120) {
-          current = section.id;
-        }
-      });
-      navLinks.forEach(link => {
-        const isActive = link.getAttribute('href') === '#' + current;
-        link.classList.toggle('active', isActive);
-      });
-    };
-
-    window.addEventListener('scroll', updateActive, { passive: true });
-    updateActive();
+  // ========== 主题切换 ==========
+  function initTheme() {
+    const saved = localStorage.getItem('sm-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', saved);
+    const btn = document.getElementById('themeToggle');
+    if (btn) btn.textContent = saved === 'dark' ? '☀️' : '🌙';
+    btn?.addEventListener('click', () => {
+      const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = cur === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('sm-theme', next);
+      btn.textContent = next === 'dark' ? '☀️' : '🌙';
+      // 重渲染当前页图表(颜色变了)
+      onPageShow(ROUTES[currentRoute].page);
+    });
   }
 
-  // ========== 10. 移动端汉堡菜单 ==========
-  function initMobileMenu() {
+  // ========== 移动端抽屉 ==========
+  function initDrawer() {
     const burger = document.getElementById('navBurger');
     const drawer = document.getElementById('navDrawer');
     const backdrop = document.getElementById('navBackdrop');
-    if (!burger || !drawer) return;
-
-    const close = () => {
+    function openDrawer() {
+      burger.classList.add('open');
+      drawer.classList.add('open');
+      backdrop.classList.add('show');
+    }
+    function closeDrawerFn() {
       burger.classList.remove('open');
       drawer.classList.remove('open');
       backdrop.classList.remove('show');
-      document.body.style.overflow = '';
-    };
-
-    const toggle = () => {
-      const isOpen = drawer.classList.contains('open');
-      if (isOpen) close(); else {
-        burger.classList.add('open');
-        drawer.classList.add('open');
-        backdrop.classList.add('show');
-        document.body.style.overflow = 'hidden';
-      }
-    };
-
-    burger.addEventListener('click', toggle);
-    backdrop.addEventListener('click', close);
-
-    // 抽屉菜单点击后关闭
-    drawer.querySelectorAll('a').forEach(a => {
-      a.addEventListener('click', () => setTimeout(close, 100));
-    });
-
-    // ESC 关闭
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && drawer.classList.contains('open')) close();
-    });
-  }
-
-  // ========== 11. 主题切换 ==========
-  const THEME_KEY = 'secondary-market-theme';
-  function initThemeToggle() {
-    const btn = document.getElementById('themeToggle');
-    if (!btn) return;
-
-    // 读取保存的主题
-    const saved = localStorage.getItem(THEME_KEY);
-    if (saved === 'light') {
-      document.documentElement.setAttribute('data-theme', 'light');
-      btn.textContent = '☀️';
     }
-
-    btn.addEventListener('click', () => {
-      const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-      const next = isLight ? 'dark' : 'light';
-      document.documentElement.setAttribute('data-theme', next);
-      btn.textContent = next === 'light' ? '☀️' : '🌙';
-      localStorage.setItem(THEME_KEY, next);
-      // 重新渲染图表(颜色变了)
-      rerenderAllCharts();
+    burger?.addEventListener('click', () => {
+      if (drawer.classList.contains('open')) closeDrawerFn();
+      else openDrawer();
     });
+    backdrop?.addEventListener('click', closeDrawerFn);
+  }
+  function closeDrawer() {
+    document.getElementById('navBurger')?.classList.remove('open');
+    document.getElementById('navDrawer')?.classList.remove('open');
+    document.getElementById('navBackdrop')?.classList.remove('show');
   }
 
-  function rerenderAllCharts() {
-    // 销毁并重建所有图表
-    [
-      'chart-radar', 'chart-score', 'chart-scatter', 'chart-liquidity', 'chart-range'
-    ].forEach(id => {
-      const dom = document.getElementById(id);
-      if (dom) echarts.dispose(dom);
+  // ========== 品类下拉菜单 ==========
+  function initDropdown() {
+    const btn = document.getElementById('navCatBtn');
+    const dd = document.getElementById('navDropdown');
+    if (!btn || !dd) return;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dd.classList.toggle('open');
     });
-    D.CATEGORIES.forEach(cat => {
-      const dom = document.getElementById(`cat-radar-${cat.id}`);
-      if (dom) echarts.dispose(dom);
-    });
-    // 重建(先重置 skeleton)
-    document.querySelectorAll('.chart-canvas').forEach(c => c.classList.remove('loaded'));
-    initRadarChart();
-    initScoreChart();
-    initScatterChart();
-    initLiquidityChart();
-    initRangeChart();
-    // 重新渲染卡片雷达(独立)
-    D.CATEGORIES.forEach((cat, idx) => {
-      const dom = document.getElementById(`cat-radar-${cat.id}`);
-      if (!dom) return;
-      const chart = echarts.init(dom);
-      chart.setOption({
-        ...baseChartOption(),
-        tooltip: {
-          trigger: 'item',
-          backgroundColor: isLight() ? 'rgba(255,255,255,0.95)' : 'rgba(20, 25, 37, 0.95)',
-          borderColor: CHART_COLORS.border
-        },
-        radar: {
-          indicator: [
-            { name: '日常', max: 5 },
-            { name: '装饰', max: 5 },
-            { name: '社交', max: 5 },
-            { name: '流通', max: 5 },
-            { name: '保值', max: 5 }
-          ],
-          shape: 'polygon',
-          splitNumber: 5,
-          axisName: { color: isLight() ? '#5a6373' : CHART_COLORS.subtext, fontSize: 11 },
-          splitLine: { lineStyle: { color: CHART_COLORS.border } },
-          splitArea: { areaStyle: { color: ['transparent'] } },
-          axisLine: { lineStyle: { color: CHART_COLORS.border } }
-        },
-        series: [{
-          type: 'radar',
-          data: [{
-            value: [cat.score.daily, cat.score.decor, cat.score.social, cat.score.liquidity, cat.score.preserve],
-            name: cat.name,
-            symbol: 'circle',
-            symbolSize: 4,
-            lineStyle: { color: CATEGORY_COLORS[idx], width: 2 },
-            areaStyle: { color: CATEGORY_COLORS[idx], opacity: 0.25 },
-            itemStyle: { color: CATEGORY_COLORS[idx] }
-          }]
-        }]
-      });
-      chart.on('finished', () => markChartLoaded(dom));
-    });
+    document.addEventListener('click', () => dd.classList.remove('open'));
+    dd.addEventListener('click', (e) => e.stopPropagation());
   }
 
-  // ========== 12. 返回顶部按钮 ==========
-  function initBackToTop() {
-    const btn = document.getElementById('backToTop');
-    if (!btn) return;
-
-    const onScroll = () => {
-      btn.classList.toggle('visible', window.scrollY > 600);
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-
-    btn.addEventListener('click', () => {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-  }
-
-  // ========== 13. 响应式 resize ==========
-  function initResizeHandler() {
-    let timer = null;
-    window.addEventListener('resize', () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        ['chart-radar', 'chart-score', 'chart-scatter', 'chart-liquidity', 'chart-range']
-          .forEach(id => echarts.getInstanceByDom(document.getElementById(id))?.resize());
-        D.CATEGORIES.forEach(cat => {
-          echarts.getInstanceByDom(document.getElementById(`cat-radar-${cat.id}`))?.resize();
-        });
-      }, 200);
+  // ========== 全局点击代理:navigation ==========
+  function initNavDelegate() {
+    document.body.addEventListener('click', (e) => {
+      const a = e.target.closest('a[data-route]');
+      if (!a) return;
+      const route = a.getAttribute('data-route');
+      if (ROUTES[route]) {
+        e.preventDefault();
+        navigate(route);
+      }
     });
   }
 
   // ========== 启动 ==========
-  function init() {
-    renderCategories();
-    renderRecommendations();
-    renderRisks();
-    initRadarChart();
-    initScoreChart();
-    initScatterChart();
-    initLiquidityChart();
-    initRangeChart();
-    initNavHighlight();
-    initMobileMenu();
-    initThemeToggle();
-    initBackToTop();
-    initResizeHandler();
-    console.log('[倒爷市场] v2.0 · 14 项 UI 优化已完成');
+  function boot() {
+    initTheme();
+    initDrawer();
+    initDropdown();
+    initNavDelegate();
+    window.addEventListener('hashchange', () => navigate(parseRoute(), false));
+    navigate(parseRoute(), false);
+
+    // 窗口 resize 重置图表
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        Object.values(_chartRegistry).forEach(c => { try { c.resize(); } catch (e) {} });
+      }, 200);
+    });
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', boot);
   } else {
-    init();
+    boot();
   }
 })();
