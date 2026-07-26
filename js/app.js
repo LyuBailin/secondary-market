@@ -98,6 +98,7 @@
     } else if (page === 'dashboard') {
       renderDashSummary();
       renderDashTable();
+      renderDashCases();
     } else if (page === 'recommend') {
       renderRecSingle();
       renderRecPortfolio();
@@ -394,6 +395,15 @@
 
     const insightHtml = c.insight.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
 
+    // 该品类的成交案例(最多 2 个)
+    const catCases = M.CASE_STUDIES.filter(x => x.cat === c.id).slice(0, 2);
+    const catCasesHtml = catCases.length > 0 ? `
+      <section class="cat-info-card">
+        <h3>📈 近期成交案例</h3>
+        ${catCases.map(cs => renderCaseCard(cs, 'compact')).join('')}
+      </section>
+    ` : '';
+
     wrap.innerHTML = `
       <a class="cat-back-btn" data-route="#/dashboard" href="#/dashboard">← 返回仪表盘</a>
 
@@ -507,6 +517,8 @@
             <ul class="cat-risk-list">${c.risks.map(r => `<li>${r}</li>`).join('')}</ul>
           </section>
 
+          ${catCasesHtml}
+
           <section class="cat-info-card">
             <h3>📌 2026-07 行情总结</h3>
             <div class="cat-insight-box">${insightHtml}</div>
@@ -546,6 +558,74 @@
         <div class="portfolio-suitable">👤 适合:${p.suitable}</div>
       </div>
     `).join('');
+  }
+
+  // ========== 成交案例(通用渲染器) ==========
+  function renderCaseCard(c, mode = 'compact') {
+    const isProfit = c.outcome === 'profit';
+    const outcomeCls = isProfit ? 'case-profit' : 'case-loss';
+    const outcomeTag = isProfit ? '✓ 赚' : '✗ 亏';
+    const flow = mode === 'full' ? `
+      <div class="case-flow">
+        <div class="case-flow-side">
+          <div class="case-flow-label">买入</div>
+          <div class="case-flow-price">¥${c.buyPrice}</div>
+          <div class="case-flow-date">${c.buyDate}</div>
+          <div class="case-flow-channel">📥 ${c.buyChannel}</div>
+        </div>
+        <div class="case-flow-arrow ${outcomeCls}">→</div>
+        <div class="case-flow-side">
+          <div class="case-flow-label">卖出</div>
+          <div class="case-flow-price">¥${c.sellPrice}</div>
+          <div class="case-flow-date">${c.sellDate}</div>
+          <div class="case-flow-channel">📤 ${c.sellChannel}</div>
+        </div>
+      </div>` : '';
+    const flowCompact = mode === 'compact' ? `
+      <div class="case-mini-flow">
+        <span class="case-mini-buy">¥${c.buyPrice}</span>
+        <span class="case-mini-arrow">→</span>
+        <span class="case-mini-sell">¥${c.sellPrice}</span>
+      </div>` : '';
+    const noteHtml = c.note.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    return `
+      <div class="case-card ${mode} ${outcomeCls}">
+        <div class="case-card-head">
+          <span class="case-outcome-tag">${outcomeTag}</span>
+          <span class="case-return">${c.netReturn}</span>
+          <span class="case-hold">📅 ${c.holdPeriod}</span>
+        </div>
+        <h4 class="case-title">${c.title}</h4>
+        <div class="case-item">${c.item}</div>
+        ${flow}
+        ${flowCompact}
+        <div class="case-meta-row">
+          <span class="case-profit-amt">${c.profit}</span>
+        </div>
+        <p class="case-note">${noteHtml}</p>
+      </div>
+    `;
+  }
+
+  function renderDashCases() {
+    const wrap = document.getElementById('dashCases');
+    if (!wrap) return;
+    // 仪表盘展示 4 个:2 赚 2 亏(对比鲜明)
+    const profits = M.CASE_STUDIES.filter(c => c.outcome === 'profit').slice(0, 2);
+    const losses = M.CASE_STUDIES.filter(c => c.outcome === 'loss').slice(0, 2);
+    const featured = [...profits, ...losses];
+    wrap.innerHTML = `
+      <div class="case-grid case-grid-4">
+        ${featured.map(c => renderCaseCard(c, 'compact')).join('')}
+      </div>
+      <div class="case-summary-bar">
+        <span><strong>10</strong> 个真实风格案例</span>
+        <span>·</span>
+        <span>覆盖 6 大品类</span>
+        <span>·</span>
+        <span>查看品类详情页 → 了解该品类全部案例</span>
+      </div>
+    `;
   }
 
   // ========== 11. 风险 ==========

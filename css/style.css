@@ -1555,6 +1555,186 @@ body {
 /* ========== Pages 容器 ========== */
 .pages { display: block; }
 
+/* ========== 成交案例卡片 ========== */
+.case-grid {
+  display: grid;
+  gap: 16px;
+}
+.case-grid-4 { grid-template-columns: repeat(4, 1fr); }
+.case-grid-2 { grid-template-columns: repeat(2, 1fr); }
+
+.case-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  position: relative;
+  transition: all 0.2s;
+  overflow: hidden;
+}
+.case-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 3px;
+  background: var(--text-muted);
+}
+.case-card.case-profit::before { background: var(--accent-green); }
+.case-card.case-loss::before   { background: var(--accent-red); }
+.case-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card);
+}
+
+.case-card.compact { padding: 16px 18px; }
+.case-card.full    { padding: 22px 24px; }
+
+.case-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.case-outcome-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.5px;
+}
+.case-card.case-profit .case-outcome-tag {
+  background: rgba(107, 207, 127, 0.15);
+  color: var(--accent-green);
+}
+.case-card.case-loss .case-outcome-tag {
+  background: rgba(231, 76, 60, 0.15);
+  color: var(--accent-red);
+}
+.case-return {
+  font-size: 18px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+.case-card.case-profit .case-return { color: var(--accent-green); }
+.case-card.case-loss .case-return   { color: var(--accent-red); }
+.case-hold {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+.case-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+.case-item {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+.case-mini-flow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+.case-mini-buy { color: var(--text-muted); text-decoration: line-through; }
+.case-mini-arrow { color: var(--text-secondary); }
+.case-mini-sell { color: var(--text-primary); font-weight: 700; }
+.case-profit-amt {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  background: var(--bg-secondary);
+  padding: 3px 8px;
+  border-radius: 4px;
+  display: inline-block;
+  margin-bottom: 8px;
+}
+.case-card.case-profit .case-profit-amt { color: var(--accent-green); }
+.case-card.case-loss .case-profit-amt   { color: var(--accent-red); }
+
+.case-flow {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 10px;
+  align-items: center;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.case-flow-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.case-flow-price {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  margin-bottom: 2px;
+}
+.case-flow-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.case-flow-channel {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.case-flow-arrow {
+  font-size: 20px;
+  font-weight: 700;
+}
+.case-flow-arrow.case-profit { color: var(--accent-green); }
+.case-flow-arrow.case-loss   { color: var(--accent-red); }
+
+.case-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.case-note strong { color: var(--accent-gold); font-weight: 600; }
+
+.case-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  margin-top: 18px;
+  border-left: 2px solid var(--accent-cyan);
+}
+.case-summary-bar strong { color: var(--accent-cyan); font-size: 14px; }
+
+@media (max-width: 900px) {
+  .case-grid-4 { grid-template-columns: repeat(2, 1fr); }
+  .case-grid-2 { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .case-grid-4 { grid-template-columns: 1fr; }
+  .case-flow { grid-template-columns: 1fr; }
+  .case-flow-arrow { transform: rotate(90deg); justify-self: center; }
+}
+
 /* ========== 章节副标题 ========== */
 .section-subhead {
   margin: 56px 0 24px;
