@@ -1,0 +1,11 @@
+# robots.txt · 倒爷市场
+# https://lyubailin.github.io/secondary-market/
+
+User-agent: *
+Allow: /
+
+# 公开调研站点,无后台/私密内容,允许全量抓取
+Disallow:
+
+# Sitemap
+Sitemap: https://lyubailin.github.io/secondary-market/sitemap.xml

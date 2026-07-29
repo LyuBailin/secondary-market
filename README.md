@@ -44,7 +44,7 @@ secondary-market/
 ### 方式 2:本地 server(避免某些浏览器对 file:// 的限制)
 ```powershell
 # 进入项目目录
-Set-Location "D:\ProgramFiles\MinimaxCode\projects\secondary-market"
+Set-Location "D:\WorkSoftware\MiniMax Code\projects\secondary-market"
 
 # 启动 Python 简易 server
 python -m http.server 8765
@@ -69,7 +69,7 @@ python -m http.server 8765
 
 所有数据来源于 2025-2026 年公开市场调研:
 - 千岛 App、得物、闲鱼、Whiskystats、雅昌艺术网
-- 嘉德/北京保利/西泞等拍卖记录
+- 嘉德/北京保利/西泠等拍卖记录
 - 腕表之家、Agehome、第一财经、新浪财经
 - 邦瀚斯/苏富比拍卖记录
 
