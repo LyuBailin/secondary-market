@@ -8,12 +8,23 @@
 
 ## [Unreleased]
 
+### Changed
+- **数据快照日期同步** · 7-26 → 7-29,涉及:
+  - `js/data.js` · 头部注释 + 2 个章节分隔符
+  - `js/app.js` · 头部注释
+  - `index.html` · 4 处
+  - `README.md` · "当前数据版本"行
+
 ### Fixed
 - **数据快照日期同步** · 之前 v3.0 升级时只更新了 `js/data.js` 的注释到 2026-07-26,其他文件还停留在 2026-07-15。这次统一更新:
   - `index.html` · meta description / og:description / hero-meta / footer 共 4 处
   - `js/app.js` · 文件头注释 1 处
   - `README.md` · "当前数据版本" 描述(v2.0 · 07-15 → v3.1 · 07-26)
 - cron 试跑时发现并修复(2026-07-29)
+
+### Updated
+- **潮玩 insight** · 加 7-23 段永平加仓泡泡玛特表态("刚开始买,十年不卖")+ 7-30 城市乐园"奇遇森林"扩区,边际企稳信号,但仍维持"消费而非投资"主基调
+- **球鞋 insight** · 加 7-22 滔搏崩 -24.6% + Nike 收回代理权 + 行业 6 折清库存,板块级利空,加强"祛魅中"判断
 
 ### Added
 - `sitemap.xml` / `robots.txt` · 搜索引擎友好
