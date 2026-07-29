@@ -8,6 +8,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- **数据快照日期同步** · 之前 v3.0 升级时只更新了 `js/data.js` 的注释到 2026-07-26,其他文件还停留在 2026-07-15。这次统一更新:
+  - `index.html` · meta description / og:description / hero-meta / footer 共 4 处
+  - `js/app.js` · 文件头注释 1 处
+  - `README.md` · "当前数据版本" 描述(v2.0 · 07-15 → v3.1 · 07-26)
+- cron 试跑时发现并修复(2026-07-29)
+
 ### Added
 - `sitemap.xml` / `robots.txt` · 搜索引擎友好
 - `favicon` · 内嵌 SVG data URI,暗金色 ¥ 标识,无额外二进制文件
