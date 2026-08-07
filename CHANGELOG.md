@@ -9,6 +9,11 @@
 ## [Unreleased]
 
 ### Changed
+- **数据快照日期同步** · 8-07 → 8-08,涉及:
+  - `js/data.js` · 头部注释
+  - `js/app.js` · 头部注释
+  - `index.html` · 4 处
+  - `README.md` · "当前数据版本"行
 - **数据快照日期同步** · 8-06 → 8-07,涉及:
   - `js/data.js` · 头部注释
   - `js/app.js` · 头部注释
